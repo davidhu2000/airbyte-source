@@ -403,8 +403,8 @@ type StreamDescriptor struct {
 
 // AirbyteStreamState contains state for a single stream
 type AirbyteStreamState struct {
-	StreamDescriptor StreamDescriptor `json:"streamDescriptor"`
-	StreamState      *ShardStates     `json:"streamState,omitempty"`
+	StreamDescriptor StreamDescriptor `json:"stream_descriptor"`
+	StreamState      *ShardStates     `json:"stream_state,omitempty"`
 }
 
 // AirbyteGlobalState contains global state shared across streams
