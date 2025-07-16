@@ -132,3 +132,29 @@ discover:
 
 read:
 	docker run --rm -v .:/airbyte  -i airbyte-source-app read --config /airbyte/source.json --catalog /airbyte/catalog.json
+
+# DockerHub build and push targets
+DOCKERHUB_REPO := davidhu314
+DOCKERHUB_IMAGE := $(DOCKERHUB_REPO)/$(NAME)
+
+.PHONY: build-dockerhub
+build-dockerhub:
+	@echo "==> Building docker image for DockerHub: $(DOCKERHUB_IMAGE):$(VERSION)"
+	@docker build --platform ${DOCKER_BUILD_PLATFORM} --build-arg VERSION=$(VERSION:v%=%) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) -t $(DOCKERHUB_IMAGE):$(VERSION) -t $(DOCKERHUB_IMAGE):latest .
+	@echo "==> Tagged as $(DOCKERHUB_IMAGE):$(VERSION) and $(DOCKERHUB_IMAGE):latest"
+
+.PHONY: push-dockerhub
+push-dockerhub: build-dockerhub
+	@echo "==> Pushing docker image to DockerHub: $(DOCKERHUB_IMAGE)"
+	@docker push $(DOCKERHUB_IMAGE):latest
+	@docker push $(DOCKERHUB_IMAGE):$(VERSION)
+	@echo "==> Your image is now available at https://hub.docker.com/r/$(DOCKERHUB_IMAGE)"
+
+.PHONY: login-dockerhub
+login-dockerhub:
+	@echo "==> Logging into DockerHub (you'll be prompted for credentials)"
+	@docker login
+
+.PHONY: deploy-dockerhub
+deploy-dockerhub: login-dockerhub push-dockerhub
+	@echo "==> Successfully built and pushed $(DOCKERHUB_IMAGE):$(VERSION) to DockerHub!"
