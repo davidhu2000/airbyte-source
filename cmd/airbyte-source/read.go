@@ -28,6 +28,7 @@ func ReadCommand(ch *Helper) *cobra.Command {
 		Short: "Converts rows from a PlanetScale database into AirbyteRecordMessages",
 		Run: func(cmd *cobra.Command, args []string) {
 			ch.Logger = internal.NewLogger(cmd.OutOrStdout())
+			defer ch.Logger.Flush()
 			if readSourceConfigFilePath == "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Please pass path to a valid source config file via the [%v] argument", "config")
 				os.Exit(1)
