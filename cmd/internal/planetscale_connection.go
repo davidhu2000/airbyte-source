@@ -24,6 +24,7 @@ type PlanetScaleSource struct {
 	MaxRetries          uint                `json:"max_retries"`
 	TimeoutSeconds      *int                `json:"timeout_seconds"`
 	UseGTIDWithTablePKs bool                `json:"use_gtid_with_table_pks"`
+	StateType           string              `json:"state_type,omitempty"` // "STREAM" (default) or "GLOBAL"
 }
 
 type CustomSourceOptions struct {
@@ -124,6 +125,17 @@ func useSecureConnection() bool {
 	}
 
 	return true
+}
+
+// GetStateType returns the configured state type or defaults to STREAM
+func (psc PlanetScaleSource) GetStateType() string {
+	if psc.StateType == "" {
+		return STATE_TYPE_STREAM // Default to STREAM for backwards compatibility
+	}
+	if psc.StateType == STATE_TYPE_GLOBAL {
+		return STATE_TYPE_GLOBAL
+	}
+	return STATE_TYPE_STREAM // Fallback to STREAM for any invalid values
 }
 
 func TabletTypeToString(t psdbconnect.TabletType) string {

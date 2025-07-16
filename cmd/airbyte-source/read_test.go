@@ -113,3 +113,68 @@ func TestRead_StartingGtidsAndState(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expectedStates, syncStates)
 }
+
+// TestReadState_GlobalStateType tests that global state messages are parsed correctly
+func TestReadState_GlobalStateType(t *testing.T) {
+	psc := internal.PlanetScaleSource{
+		Host:      "aws.connect.psdb.cloud",
+		Database:  "sharded",
+		Username:  "user",
+		Password:  "pscale_password",
+		StateType: "GLOBAL",
+	}
+
+	streams := []internal.ConfiguredStream{
+		{
+			Stream: internal.Stream{
+				Name:      "table1",
+				Namespace: "sharded",
+			},
+			SyncMode: "incremental",
+		},
+	}
+	shards := []string{"-80", "80-"}
+
+	firstCursor, err := internal.TableCursorToSerializedCursor(&psdbconnect.TableCursor{
+		Shard:    "-80",
+		Keyspace: "sharded",
+		Position: "MySQL56/MyGTID:1-3",
+	})
+	assert.NoError(t, err)
+
+	// Create a global state message
+	globalStateMessage := fmt.Sprintf(`{"type":"STATE","state":{"state_type":"GLOBAL","global":{"stream_states":[{"stream_descriptor":{"name":"table1","namespace":"sharded"},"stream_state":{"shards":{"-80":{"cursor":"%s"}}}}]}}}`, firstCursor.Cursor)
+
+	expectedStates := internal.SyncState{
+		Streams: map[string]internal.ShardStates{
+			"sharded:table1": {
+				Shards: map[string]*internal.SerializedCursor{
+					"-80": firstCursor,
+				},
+			},
+		},
+	}
+
+	syncStates, err := readState(globalStateMessage, psc, streams, shards, internal.NewLogger(os.Stdout))
+	assert.NoError(t, err)
+	assert.Equal(t, expectedStates, syncStates)
+}
+
+// TestGetStateType tests the GetStateType method returns correct defaults and values
+func TestGetStateType(t *testing.T) {
+	// Test default (empty string should return STREAM)
+	psc1 := internal.PlanetScaleSource{}
+	assert.Equal(t, internal.STATE_TYPE_STREAM, psc1.GetStateType())
+
+	// Test explicit STREAM
+	psc2 := internal.PlanetScaleSource{StateType: "STREAM"}
+	assert.Equal(t, internal.STATE_TYPE_STREAM, psc2.GetStateType())
+
+	// Test explicit GLOBAL
+	psc3 := internal.PlanetScaleSource{StateType: "GLOBAL"}
+	assert.Equal(t, internal.STATE_TYPE_GLOBAL, psc3.GetStateType())
+
+	// Test invalid value (should default to STREAM)
+	psc4 := internal.PlanetScaleSource{StateType: "INVALID"}
+	assert.Equal(t, internal.STATE_TYPE_STREAM, psc4.GetStateType())
+}

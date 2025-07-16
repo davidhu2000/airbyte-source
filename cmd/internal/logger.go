@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type AirbyteLogger interface {
 	Record(tableNamespace, tableName string, data map[string]interface{})
 	Flush()
 	StreamState(streamName, namespace string, shardStates ShardStates) // Stream state method
+	GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) // Global state method
 	Error(error string)
 }
 
@@ -102,6 +104,50 @@ func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates Sh
 		State: &AirbyteState{StateType: STATE_TYPE_STREAM, Stream: streamState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("stream state encoding error: %v", err))
+	}
+}
+
+func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) {
+	// Convert streamStates map to slice of AirbyteStreamState
+	globalStreamStates := make([]AirbyteStreamState, 0, len(streamStates))
+	
+	for stateKey, shardStates := range streamStates {
+		// Parse the state key to extract namespace and stream name
+		parts := strings.SplitN(stateKey, ":", 2)
+		var namespace, streamName string
+		if len(parts) == 2 {
+			namespace = parts[0]
+			streamName = parts[1]
+		} else {
+			streamName = stateKey
+		}
+		
+		// Create stream descriptor
+		streamDescriptor := StreamDescriptor{
+			Name: streamName,
+		}
+		if namespace != "" {
+			streamDescriptor.Namespace = &namespace
+		}
+		
+		// Add to global stream states
+		globalStreamStates = append(globalStreamStates, AirbyteStreamState{
+			StreamDescriptor: streamDescriptor,
+			StreamState:      &shardStates,
+		})
+	}
+	
+	// Create global state
+	globalState := &AirbyteGlobalState{
+		SharedState:  sharedState,
+		StreamStates: globalStreamStates,
+	}
+	
+	if err := a.recordEncoder.Encode(AirbyteMessage{
+		Type:  STATE,
+		State: &AirbyteState{StateType: STATE_TYPE_GLOBAL, Global: globalState},
+	}); err != nil {
+		a.Error(fmt.Sprintf("global state encoding error: %v", err))
 	}
 }
 

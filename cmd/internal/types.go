@@ -32,6 +32,7 @@ const (
 // Airbyte state types
 const (
 	STATE_TYPE_STREAM = "STREAM"
+	STATE_TYPE_GLOBAL = "GLOBAL"
 )
 
 type Stream struct {
@@ -376,8 +377,9 @@ func mapEnumValue(value sqltypes.Value, values []string) sqltypes.Value {
 }
 
 type AirbyteState struct {
-	StateType string              `json:"state_type"`        // Always "STREAM"
-	Stream    *AirbyteStreamState `json:"stream"`            // Stream state for STREAM type
+	StateType string              `json:"state_type"`        // "STREAM" or "GLOBAL"
+	Stream    *AirbyteStreamState `json:"stream,omitempty"`  // Stream state for STREAM type
+	Global    *AirbyteGlobalState `json:"global,omitempty"`  // Global state for GLOBAL type
 }
 
 // StreamDescriptor identifies a stream by name and optional namespace
@@ -390,6 +392,12 @@ type StreamDescriptor struct {
 type AirbyteStreamState struct {
 	StreamDescriptor StreamDescriptor `json:"stream_descriptor"`
 	StreamState      *ShardStates     `json:"stream_state,omitempty"`
+}
+
+// AirbyteGlobalState contains global state shared across streams
+type AirbyteGlobalState struct {
+	SharedState  map[string]interface{} `json:"shared_state,omitempty"`   // Shared state across all streams
+	StreamStates []AirbyteStreamState   `json:"stream_states"`            // Individual stream states
 }
 
 type AirbyteMessage struct {

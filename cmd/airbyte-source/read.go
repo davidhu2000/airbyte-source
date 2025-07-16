@@ -131,8 +131,19 @@ func ReadCommand(ch *Helper) *cobra.Command {
 					}
 				}
 				
-				// Emit per-stream state after processing all shards for this stream
-				ch.Logger.StreamState(table.Stream.Name, keyspaceOrDatabase, syncState.Streams[streamStateKey])
+				// Emit state based on configured state type
+				stateType := psc.GetStateType()
+				if stateType == internal.STATE_TYPE_STREAM {
+					// Emit per-stream state after processing all shards for this stream
+					ch.Logger.StreamState(table.Stream.Name, keyspaceOrDatabase, syncState.Streams[streamStateKey])
+				}
+			}
+			
+			// For GLOBAL state type, emit a single global state message after processing all streams
+			stateType := psc.GetStateType()
+			if stateType == internal.STATE_TYPE_GLOBAL {
+				// Emit global state with all stream states
+				ch.Logger.GlobalState(nil, syncState.Streams) // No shared state for this connector
 			}
 		},
 	}
@@ -198,8 +209,42 @@ func parseStreamStateMessages(state string, syncState *internal.SyncState) error
 		}
 		
 		if message.Type == internal.STATE && message.State != nil {
-			if message.State.StateType == internal.STATE_TYPE_STREAM {
+			switch message.State.StateType {
+			case internal.STATE_TYPE_STREAM:
 				// Handle STREAM state message
+				if message.State.Stream != nil {
+					streamDesc := message.State.Stream.StreamDescriptor
+					namespace := ""
+					if streamDesc.Namespace != nil {
+						namespace = *streamDesc.Namespace
+					}
+					
+					stateKey := namespace + ":" + streamDesc.Name
+					if message.State.Stream.StreamState != nil {
+						syncState.Streams[stateKey] = *message.State.Stream.StreamState
+					}
+				}
+			case internal.STATE_TYPE_GLOBAL:
+				// Handle GLOBAL state message
+				if message.State.Global != nil {
+					// Process each stream state in the global state
+					for _, streamState := range message.State.Global.StreamStates {
+						streamDesc := streamState.StreamDescriptor
+						namespace := ""
+						if streamDesc.Namespace != nil {
+							namespace = *streamDesc.Namespace
+						}
+						
+						stateKey := namespace + ":" + streamDesc.Name
+						if streamState.StreamState != nil {
+							syncState.Streams[stateKey] = *streamState.StreamState
+						}
+					}
+				}
+			case "":
+				// Legacy state format (backwards compatibility)
+				// This handles old state messages that don't have state_type set
+				// Treat as stream state if it has stream field
 				if message.State.Stream != nil {
 					streamDesc := message.State.Stream.StreamDescriptor
 					namespace := ""
