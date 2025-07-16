@@ -122,3 +122,13 @@ $(PSDBCONNECT_PROTO_OUT)/v1alpha1/psdbconnect.v1alpha1.pb.go: $(PROTO_TOOLS) pro
 	  -I thirdparty/vitess/proto \
 	  -I proto \
 	  proto/psdbconnect.v1alpha1.proto
+
+
+check:
+	docker run --rm -v .:/airbyte  -i airbyte-source-app check --config /airbyte/source.json
+
+discover:
+	docker run --rm -v .:/airbyte  -i airbyte-source-app discover --config /airbyte/source.json > catalog.json
+
+read:
+	docker run --rm -v .:/airbyte  -i airbyte-source-app read --config /airbyte/source.json --catalog /airbyte/catalog.json

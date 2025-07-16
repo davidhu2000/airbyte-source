@@ -29,6 +29,11 @@ const (
 	LOGLEVEL_INFO  = "INFO"
 )
 
+// Airbyte state types
+const (
+	STATE_TYPE_STREAM = "STREAM"
+)
+
 type Stream struct {
 	Name                string       `json:"name"`
 	Schema              StreamSchema `json:"json_schema"`
@@ -371,7 +376,20 @@ func mapEnumValue(value sqltypes.Value, values []string) sqltypes.Value {
 }
 
 type AirbyteState struct {
-	Data SyncState `json:"data"`
+	StateType string              `json:"state_type"`        // Always "STREAM"
+	Stream    *AirbyteStreamState `json:"stream"`            // Stream state for STREAM type
+}
+
+// StreamDescriptor identifies a stream by name and optional namespace
+type StreamDescriptor struct {
+	Name      string  `json:"name"`
+	Namespace *string `json:"namespace,omitempty"`
+}
+
+// AirbyteStreamState contains state for a single stream
+type AirbyteStreamState struct {
+	StreamDescriptor StreamDescriptor `json:"stream_descriptor"`
+	StreamState      *ShardStates     `json:"stream_state,omitempty"`
 }
 
 type AirbyteMessage struct {

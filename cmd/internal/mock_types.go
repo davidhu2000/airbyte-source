@@ -50,7 +50,7 @@ func (tal *testAirbyteLogger) Record(tableNamespace, tableName string, data map[
 func (testAirbyteLogger) Flush() {
 }
 
-func (testAirbyteLogger) State(syncState SyncState) {
+func (testAirbyteLogger) StreamState(streamName, namespace string, shardStates ShardStates) {
 	// TODO implement me
 	panic("implement me")
 }

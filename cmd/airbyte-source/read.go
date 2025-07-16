@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/planetscale/airbyte-source/cmd/internal"
 	psdbconnectv1alpha1 "github.com/planetscale/airbyte-source/proto/psdbconnect/v1alpha1"
@@ -128,8 +129,10 @@ func ReadCommand(ch *Helper) *cobra.Command {
 						// otherwise, the older state is round-tripped back to Airbyte.
 						syncState.Streams[streamStateKey].Shards[shardName] = sc
 					}
-					ch.Logger.State(syncState)
 				}
+				
+				// Emit per-stream state after processing all shards for this stream
+				ch.Logger.StreamState(table.Stream.Name, keyspaceOrDatabase, syncState.Streams[streamStateKey])
 			}
 		},
 	}
@@ -147,10 +150,11 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	syncState := internal.SyncState{
 		Streams: map[string]internal.ShardStates{},
 	}
+	
 	if state != "" {
-		err := json.Unmarshal([]byte(state), &syncState)
+		err := parseStreamStateMessages(state, &syncState)
 		if err != nil {
-			return syncState, err
+			return syncState, fmt.Errorf("failed to parse STREAM state format: %v", err)
 		}
 	}
 
@@ -176,6 +180,43 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	}
 
 	return syncState, nil
+}
+
+// parseStreamStateMessages parses a sequence of AirbyteMessage state messages
+func parseStreamStateMessages(state string, syncState *internal.SyncState) error {
+	lines := strings.Split(strings.TrimSpace(state), "\n")
+	
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		
+		var message internal.AirbyteMessage
+		err := json.Unmarshal([]byte(line), &message)
+		if err != nil {
+			continue // Skip invalid JSON lines
+		}
+		
+		if message.Type == internal.STATE && message.State != nil {
+			if message.State.StateType == internal.STATE_TYPE_STREAM {
+				// Handle STREAM state message
+				if message.State.Stream != nil {
+					streamDesc := message.State.Stream.StreamDescriptor
+					namespace := ""
+					if streamDesc.Namespace != nil {
+						namespace = *streamDesc.Namespace
+					}
+					
+					stateKey := namespace + ":" + streamDesc.Name
+					if message.State.Stream.StreamState != nil {
+						syncState.Streams[stateKey] = *message.State.Stream.StreamState
+					}
+				}
+			}
+		}
+	}
+	
+	return nil
 }
 
 func readCatalog(path string) (c internal.ConfiguredCatalog, err error) {
