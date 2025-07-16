@@ -173,9 +173,22 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	}
 	
 	if state != "" {
-		err := parseStreamStateMessages(state, &syncState)
+		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Parsing state file with length: %d", len(state)))
+		
+		// Try to parse the new Airbyte state format first (array of stream states)
+		err := parseNewStateFormat(state, &syncState)
 		if err != nil {
-			return syncState, fmt.Errorf("failed to parse STREAM state format: %v", err)
+			// Fall back to old format parsing
+			logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Failed to parse new state format, trying old format: %v", err))
+			err = parseStreamStateMessages(state, &syncState)
+			if err != nil {
+				return syncState, fmt.Errorf("failed to parse both new and old state formats: %v", err)
+			}
+		} else {
+			logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Successfully parsed new state format with %d streams", len(syncState.Streams)))
+			for stateKey := range syncState.Streams {
+				logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Found state for stream key: %s", stateKey))
+			}
 		}
 	}
 
@@ -186,21 +199,56 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 		}
 		stateKey := keyspaceOrDatabase + ":" + s.Stream.Name
 		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Syncing stream %s with sync mode %s", s.Stream.Name, s.SyncMode))
+		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Looking for state with key: %s", stateKey))
 		ignoreCurrentCursor := !s.IncrementalSyncRequested()
 
 		// if no table cursor was found in the state, or we want to ignore the current cursor,
 		// Send along an empty cursor for each shard.
 		if _, ok := syncState.Streams[stateKey]; !ok || ignoreCurrentCursor {
+			if !ok {
+				logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("No cursor found for key %s (state exists: %t)", stateKey, ok))
+			}
+			if ignoreCurrentCursor {
+				logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Ignoring cursor for key %s because incremental sync not requested", stateKey))
+			}
 			logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Ignoring current cursor since incremental sync is disabled, or no cursor was found for key %s", stateKey))
 			initialState, err := psc.GetInitialState(keyspaceOrDatabase, shards)
 			if err != nil {
 				return syncState, err
 			}
 			syncState.Streams[stateKey] = initialState
+		} else {
+			logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Using existing state for key %s", stateKey))
 		}
 	}
 
 	return syncState, nil
+}
+
+// parseNewStateFormat parses the new Airbyte state format (array of stream states)
+func parseNewStateFormat(state string, syncState *internal.SyncState) error {
+	var streamStates []internal.AirbyteStreamState
+	
+	// Try to parse as array of stream states
+	err := json.Unmarshal([]byte(state), &streamStates)
+	if err != nil {
+		return fmt.Errorf("failed to parse as new state format: %v", err)
+	}
+	
+	// Convert to our internal format
+	for _, streamState := range streamStates {
+		namespace := ""
+		if streamState.StreamDescriptor.Namespace != nil {
+			namespace = *streamState.StreamDescriptor.Namespace
+		}
+		
+		stateKey := namespace + ":" + streamState.StreamDescriptor.Name
+		if streamState.StreamState != nil {
+			syncState.Streams[stateKey] = *streamState.StreamState
+		}
+	}
+	
+	return nil
 }
 
 // parseStreamStateMessages parses a sequence of AirbyteMessage state messages
