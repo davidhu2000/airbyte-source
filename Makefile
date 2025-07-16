@@ -128,7 +128,7 @@ check:
 	docker run --rm -v .:/airbyte  -i airbyte-source-app check --config /airbyte/source.json
 
 discover:
-	docker run --rm -v .:/airbyte  -i airbyte-source-app discover --config /airbyte/source.json > catalog.json
+	docker run --rm -v .:/airbyte  -i airbyte-source-app discover --config /airbyte/source.json > catalog-raw.json
 
 read:
 	docker run --rm -v .:/airbyte  -i airbyte-source-app read --config /airbyte/source.json --catalog /airbyte/catalog.json
