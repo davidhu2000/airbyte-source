@@ -109,6 +109,9 @@ func ReadCommand(ch *Helper) *cobra.Command {
 					os.Exit(1)
 				}
 
+				// Emit STARTED trace message
+				ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_STARTED)
+
 				for shardName, shardState := range streamState.Shards {
 					var tc *psdbconnectv1alpha1.TableCursor
 
@@ -118,6 +121,9 @@ func ReadCommand(ch *Helper) *cobra.Command {
 						ch.Logger.Error(fmt.Sprintf("Invalid serialized cursor for stream %v, failed with [%v]", streamStateKey, err))
 						os.Exit(1)
 					}
+
+					// Emit RUNNING trace message before processing
+					ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_RUNNING)
 
 					sc, err := ch.Database.Read(context.Background(), cmd.OutOrStdout(), psc, table, tc)
 					if err != nil {
@@ -131,6 +137,9 @@ func ReadCommand(ch *Helper) *cobra.Command {
 						syncState.Streams[streamStateKey].Shards[shardName] = sc
 					}
 				}
+				
+				// Emit COMPLETE trace message after processing all shards for this stream
+				ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_COMPLETE)
 				
 				// Emit state based on configured state type
 				stateType := psc.GetStateType()

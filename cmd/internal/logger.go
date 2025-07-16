@@ -17,6 +17,7 @@ type AirbyteLogger interface {
 	Flush()
 	StreamState(streamName, namespace string, shardStates ShardStates) // Stream state method
 	GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) // Global state method
+	StreamTrace(streamName, namespace, status string) // Stream status trace method
 	Error(error string)
 }
 
@@ -148,6 +149,33 @@ func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamSt
 		State: &AirbyteState{StateType: STATE_TYPE_GLOBAL, Global: globalState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("global state encoding error: %v", err))
+	}
+}
+
+func (a *airbyteLogger) StreamTrace(streamName, namespace, status string) {
+	// Create stream descriptor
+	streamDescriptor := StreamDescriptor{
+		Name: streamName,
+	}
+	if namespace != "" {
+		streamDescriptor.Namespace = &namespace
+	}
+	
+	// Create stream status
+	streamStatus := &AirbyteStreamStatus{
+		StreamDescriptor: streamDescriptor,
+		Status:           status,
+	}
+	
+	if err := a.recordEncoder.Encode(AirbyteMessage{
+		Type:  TRACE,
+		Trace: &AirbyteTraceMessage{
+			Type:      TRACE_TYPE_STREAM,
+			EmittedAt: time.Now().UnixMilli(),
+			Stream:    streamStatus,
+		},
+	}); err != nil {
+		a.Error(fmt.Sprintf("stream trace encoding error: %v", err))
 	}
 }
 

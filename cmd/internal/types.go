@@ -21,6 +21,7 @@ const (
 	LOG               = "LOG"
 	CONNECTION_STATUS = "CONNECTION_STATUS"
 	CATALOG           = "CATALOG"
+	TRACE             = "TRACE"
 )
 
 const (
@@ -33,6 +34,18 @@ const (
 const (
 	STATE_TYPE_STREAM = "STREAM"
 	STATE_TYPE_GLOBAL = "GLOBAL"
+)
+
+// TRACE message types
+const (
+	TRACE_TYPE_STREAM = "STREAM"
+)
+
+// Stream status types
+const (
+	STREAM_STATUS_STARTED  = "STARTED"
+	STREAM_STATUS_RUNNING  = "RUNNING"
+	STREAM_STATUS_COMPLETE = "COMPLETE"
 )
 
 type Stream struct {
@@ -407,6 +420,20 @@ type AirbyteMessage struct {
 	Catalog          *Catalog           `json:"catalog,omitempty"`
 	Record           *AirbyteRecord     `json:"record,omitempty"`
 	State            *AirbyteState      `json:"state,omitempty"`
+	Trace            *AirbyteTraceMessage `json:"trace,omitempty"`
+}
+
+// AirbyteTraceMessage for stream status tracking
+type AirbyteTraceMessage struct {
+	Type         string             `json:"type"`
+	EmittedAt    int64              `json:"emitted_at"`
+	Stream       *AirbyteStreamStatus `json:"stream,omitempty"`
+}
+
+// AirbyteStreamStatus for tracking stream processing status
+type AirbyteStreamStatus struct {
+	StreamDescriptor StreamDescriptor `json:"stream_descriptor"`
+	Status           string           `json:"status"`
 }
 
 // A map of starting GTIDs for every keyspace and shard

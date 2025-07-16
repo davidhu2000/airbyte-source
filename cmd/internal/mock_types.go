@@ -60,6 +60,11 @@ func (testAirbyteLogger) GlobalState(sharedState map[string]interface{}, streamS
 	panic("implement me")
 }
 
+func (testAirbyteLogger) StreamTrace(streamName, namespace, status string) {
+	// TODO implement me
+	panic("implement me")
+}
+
 func (testAirbyteLogger) Error(error string) {
 	// TODO implement me
 	panic("implement me")
