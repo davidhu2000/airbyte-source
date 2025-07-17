@@ -228,26 +228,29 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	return syncState, nil
 }
 
-// parseNewStateFormat parses the new Airbyte state format (array of stream states)
+// parseNewStateFormat parses the new Airbyte state format (array of stream state messages)
 func parseNewStateFormat(state string, syncState *internal.SyncState) error {
-	var streamStates []internal.AirbyteStreamState
+	var messages []internal.AirbyteMessage
 	
-	// Try to parse as array of stream states
-	err := json.Unmarshal([]byte(state), &streamStates)
+	// Try to parse as array of Airbyte messages
+	err := json.Unmarshal([]byte(state), &messages)
 	if err != nil {
 		return fmt.Errorf("failed to parse as new state format: %v", err)
 	}
 	
 	// Convert to our internal format
-	for _, streamState := range streamStates {
-		namespace := ""
-		if streamState.StreamDescriptor.Namespace != nil {
-			namespace = *streamState.StreamDescriptor.Namespace
-		}
-		
-		stateKey := namespace + ":" + streamState.StreamDescriptor.Name
-		if streamState.StreamState != nil {
-			syncState.Streams[stateKey] = *streamState.StreamState
+	for _, message := range messages {
+		if message.Type == internal.STATE && message.State != nil && message.State.Stream != nil {
+			streamDesc := message.State.Stream.StreamDescriptor
+			namespace := ""
+			if streamDesc.Namespace != nil {
+				namespace = *streamDesc.Namespace
+			}
+			
+			stateKey := namespace + ":" + streamDesc.Name
+			if message.State.Stream.StreamState != nil {
+				syncState.Streams[stateKey] = *message.State.Stream.StreamState
+			}
 		}
 	}
 	
