@@ -83,14 +83,6 @@
           "description": "Use GTID position together with table primary keys",
           "order": 10
         },
-        "state_type": {
-          "type": "string",
-          "title": "State Type",
-          "default": "GLOBAL",
-          "description": "Choose between STREAM (state tracked per stream) or GLOBAL (shared state across streams). Use GLOBAL for CDC scenarios where you need shared cursor positions.",
-          "enum": ["STREAM", "GLOBAL"],
-          "order": 11
-        },
         "options": {
           "type": "object",
           "title": "Customize serialization",
