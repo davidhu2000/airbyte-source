@@ -1,5 +1,5 @@
 COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null)
-VERSION := "0.1.14"
+VERSION := "0.1.15"
 DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 NAME := "airbyte-source"
 DOCKER_BUILD_PLATFORM := "linux/amd64"
@@ -133,7 +133,7 @@ discover:
 read:
 	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json
 read_with_state:
-	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json --state /airbyte/state_new_format.json
+	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json --state /airbyte/state_global.json
 
 # DockerHub build and push targets
 DOCKERHUB_REPO := davidhu314
@@ -160,3 +160,7 @@ login-dockerhub:
 .PHONY: deploy-dockerhub
 deploy-dockerhub: login-dockerhub push-dockerhub
 	@echo "==> Successfully built and pushed $(DOCKERHUB_IMAGE):$(VERSION) to DockerHub!"
+
+.PHONY: run-go
+run-go:
+	docker run -it --rm -v $(PWD):/app -w /app golang:1.22.2 /bin/bash
