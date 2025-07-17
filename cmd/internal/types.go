@@ -38,7 +38,7 @@ const (
 
 // TRACE message types
 const (
-	TRACE_TYPE_STREAM = "STREAM"
+	TRACE_TYPE_STREAM = "STREAM_STATUS"
 )
 
 // Stream status types
@@ -390,7 +390,7 @@ func mapEnumValue(value sqltypes.Value, values []string) sqltypes.Value {
 }
 
 type AirbyteState struct {
-	StateType string              `json:"state_type"`        // "STREAM" or "GLOBAL"
+	Type 	string                   `json:"type"`        // "STREAM" or "GLOBAL"
 	Stream    *AirbyteStreamState `json:"stream,omitempty"`  // Stream state for STREAM type
 	Global    *AirbyteGlobalState `json:"global,omitempty"`  // Global state for GLOBAL type
 }
