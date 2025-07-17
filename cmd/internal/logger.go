@@ -100,11 +100,16 @@ func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates Sh
 		StreamState:      &shardStates,
 	}
 	
+	// Debug: Log that we're about to emit a state message
+	a.Log(LOGLEVEL_INFO, fmt.Sprintf("LOGGER: About to encode and emit STREAM state message for %s:%s", namespace, streamName))
+	
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
 		State: &AirbyteState{StateType: STATE_TYPE_STREAM, Stream: streamState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("stream state encoding error: %v", err))
+	} else {
+		a.Log(LOGLEVEL_INFO, fmt.Sprintf("LOGGER: Successfully encoded STREAM state message for %s:%s", namespace, streamName))
 	}
 }
 
@@ -144,11 +149,16 @@ func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamSt
 		StreamStates: globalStreamStates,
 	}
 	
+	// Debug: Log that we're about to emit a global state message
+	a.Log(LOGLEVEL_INFO, fmt.Sprintf("LOGGER: About to encode and emit GLOBAL state message with %d streams", len(globalStreamStates)))
+	
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
 		State: &AirbyteState{StateType: STATE_TYPE_GLOBAL, Global: globalState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("global state encoding error: %v", err))
+	} else {
+		a.Log(LOGLEVEL_INFO, fmt.Sprintf("LOGGER: Successfully encoded GLOBAL state message with %d streams", len(globalStreamStates)))
 	}
 }
 

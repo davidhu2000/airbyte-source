@@ -98,6 +98,15 @@ func ReadCommand(ch *Helper) *cobra.Command {
 				os.Exit(1)
 			}
 
+			// Log initial sync state configuration
+			ch.Logger.Log(internal.LOGLEVEL_INFO, "=== SYNC STATE CONFIGURATION ===")
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Configured state type: %s", psc.GetStateType()))
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Number of streams to sync: %d", len(catalog.Streams)))
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Initial sync state contains %d stream(s)", len(syncState.Streams)))
+			for streamKey, streamState := range syncState.Streams {
+				ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Stream %s has %d shard(s)", streamKey, len(streamState.Shards)))
+			}
+
 			for _, table := range catalog.Streams {
 				keyspaceOrDatabase := table.Stream.Namespace
 				if keyspaceOrDatabase == "" {
@@ -135,7 +144,15 @@ func ReadCommand(ch *Helper) *cobra.Command {
 					if sc != nil {
 						// if we get any new state, we assign it here.
 						// otherwise, the older state is round-tripped back to Airbyte.
+						ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Updating state for stream %s, shard %s with new cursor", streamStateKey, shardName))
 						syncState.Streams[streamStateKey].Shards[shardName] = sc
+						cursorPreview := sc.Cursor
+						if len(cursorPreview) > 50 {
+							cursorPreview = cursorPreview[:50] + "..."
+						}
+						ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("New cursor for stream %s, shard %s: %s", streamStateKey, shardName, cursorPreview))
+					} else {
+						ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("No new state returned for stream %s, shard %s - keeping existing state", streamStateKey, shardName))
 					}
 				}
 				
@@ -147,20 +164,50 @@ func ReadCommand(ch *Helper) *cobra.Command {
 				
 				// Emit state based on configured state type
 				stateType := psc.GetStateType()
+				ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("State type configured as: %s", stateType))
 				if stateType == internal.STATE_TYPE_STREAM {
 					// Emit per-stream state after processing all shards for this stream
+					ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Emitting STREAM state for stream: %s, namespace: %s", table.Stream.Name, keyspaceOrDatabase))
+					ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Stream state contains %d shards", len(syncState.Streams[streamStateKey].Shards)))
+					for shardName, shardState := range syncState.Streams[streamStateKey].Shards {
+						cursorPreview := shardState.Cursor
+						if len(cursorPreview) > 50 {
+							cursorPreview = cursorPreview[:50] + "..."
+						}
+						ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Shard %s cursor: %s", shardName, cursorPreview))
+					}
 					ch.Logger.StreamState(table.Stream.Name, keyspaceOrDatabase, syncState.Streams[streamStateKey])
+					ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Successfully emitted STREAM state for stream: %s", table.Stream.Name))
 				}
 			}
 			
 			// For GLOBAL state type, emit a single global state message after processing all streams
 			stateType := psc.GetStateType()
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Final state emission - State type: %s", stateType))
 			if stateType == internal.STATE_TYPE_GLOBAL {
 				// Flush any pending records before emitting global state
 				ch.Logger.Flush()
+				ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Emitting GLOBAL state with %d streams", len(syncState.Streams)))
+				for streamKey, streamState := range syncState.Streams {
+					ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Global state - Stream %s has %d shards", streamKey, len(streamState.Shards)))
+					for shardName, shardState := range streamState.Shards {
+						cursorPreview := shardState.Cursor
+						if len(cursorPreview) > 50 {
+							cursorPreview = cursorPreview[:50] + "..."
+						}
+						ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Global state - Stream %s, Shard %s cursor: %s", streamKey, shardName, cursorPreview))
+					}
+				}
 				// Emit global state with all stream states
 				ch.Logger.GlobalState(nil, syncState.Streams) // No shared state for this connector
+				ch.Logger.Log(internal.LOGLEVEL_INFO, "Successfully emitted GLOBAL state message")
+			} else {
+				ch.Logger.Log(internal.LOGLEVEL_INFO, "No global state emission - using STREAM state type")
 			}
+			
+			ch.Logger.Log(internal.LOGLEVEL_INFO, "=== SYNC COMPLETED ===")
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Total streams processed: %d", len(catalog.Streams)))
+			ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("State emission mode: %s", psc.GetStateType()))
 		},
 	}
 	readCmd.Flags().StringVar(&readSourceCatalogPath, "catalog", "", "Path to the PlanetScale catalog configuration")
