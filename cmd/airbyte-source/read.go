@@ -33,7 +33,7 @@ func ReadCommand(ch *Helper) *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Please pass path to a valid source config file via the [%v] argument", "config")
 				os.Exit(1)
 			}
-			
+
 			if readSourceCatalogPath == "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Please pass path to a valid source catalog file via the [%v] argument", "config")
 				os.Exit(1)
@@ -142,9 +142,6 @@ func ReadCommand(ch *Helper) *cobra.Command {
 				// Emit COMPLETE trace message after processing all shards for this stream
 				ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_COMPLETE)
 				
-				// Flush any pending records before emitting state
-				ch.Logger.Flush()
-				
 				// Emit state based on configured state type
 				stateType := psc.GetStateType()
 				if stateType == internal.STATE_TYPE_STREAM {
@@ -156,8 +153,6 @@ func ReadCommand(ch *Helper) *cobra.Command {
 			// For GLOBAL state type, emit a single global state message after processing all streams
 			stateType := psc.GetStateType()
 			if stateType == internal.STATE_TYPE_GLOBAL {
-				// Flush any pending records before emitting global state
-				ch.Logger.Flush()
 				// Emit global state with all stream states
 				ch.Logger.GlobalState(nil, syncState.Streams) // No shared state for this connector
 			}
@@ -177,6 +172,8 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	syncState := internal.SyncState{
 		Streams: map[string]internal.ShardStates{},
 	}
+
+	logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("state value: %s", state))
 	
 	if state != "" {
 		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Parsing state file with length: %d", len(state)))
