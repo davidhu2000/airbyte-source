@@ -15,13 +15,13 @@ type AirbyteLogger interface {
 	ConnectionStatus(status ConnectionStatus)
 	Record(tableNamespace, tableName string, data map[string]interface{})
 	Flush()
-	StreamState(streamName, namespace string, shardStates ShardStates) // Stream state method
+	StreamState(streamName, namespace string, shardStates ShardStates)                   // Stream state method
 	GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) // Global state method
-	StreamTrace(streamName, namespace, status string) // Stream status trace method
+	StreamTrace(streamName, namespace, status string)                                    // Stream status trace method
 	Error(error string)
 }
 
-const MaxBatchSize = 1
+const MaxBatchSize = 10000
 
 func NewLogger(w io.Writer) AirbyteLogger {
 	al := airbyteLogger{}
@@ -93,13 +93,13 @@ func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates Sh
 	if namespace != "" {
 		streamDescriptor.Namespace = &namespace
 	}
-	
+
 	// Create stream state
 	streamState := &AirbyteStreamState{
 		StreamDescriptor: streamDescriptor,
 		StreamState:      &shardStates,
 	}
-	
+
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
 		State: &AirbyteState{Type: STATE_TYPE_STREAM, Stream: streamState},
@@ -111,7 +111,7 @@ func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates Sh
 func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) {
 	// Convert streamStates map to slice of AirbyteStreamState
 	globalStreamStates := make([]AirbyteStreamState, 0, len(streamStates))
-	
+
 	for stateKey, shardStates := range streamStates {
 		// Parse the state key to extract namespace and stream name
 		parts := strings.SplitN(stateKey, ":", 2)
@@ -122,7 +122,7 @@ func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamSt
 		} else {
 			streamName = stateKey
 		}
-		
+
 		// Create stream descriptor
 		streamDescriptor := StreamDescriptor{
 			Name: streamName,
@@ -130,20 +130,20 @@ func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamSt
 		if namespace != "" {
 			streamDescriptor.Namespace = &namespace
 		}
-		
+
 		// Add to global stream states
 		globalStreamStates = append(globalStreamStates, AirbyteStreamState{
 			StreamDescriptor: streamDescriptor,
 			StreamState:      &shardStates,
 		})
 	}
-	
+
 	// Create global state
 	globalState := &AirbyteGlobalState{
 		SharedState:  sharedState,
 		StreamStates: globalStreamStates,
 	}
-	
+
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
 		State: &AirbyteState{Type: STATE_TYPE_GLOBAL, Global: globalState},
@@ -160,19 +160,19 @@ func (a *airbyteLogger) StreamTrace(streamName, namespace, status string) {
 	if namespace != "" {
 		streamDescriptor.Namespace = &namespace
 	}
-	
+
 	// Create stream status
 	streamStatus := &AirbyteStreamStatus{
 		StreamDescriptor: streamDescriptor,
 		Status:           status,
 	}
-	
+
 	if err := a.recordEncoder.Encode(AirbyteMessage{
-		Type:  TRACE,
+		Type: TRACE,
 		Trace: &AirbyteTraceMessage{
-			Type:      TRACE_TYPE_STREAM,
-			EmittedAt: time.Now().UnixMilli(),
-			StreamStatus:    streamStatus,
+			Type:         TRACE_TYPE_STREAM,
+			EmittedAt:    time.Now().UnixMilli(),
+			StreamStatus: streamStatus,
 		},
 	}); err != nil {
 		a.Error(fmt.Sprintf("stream trace encoding error: %v", err))

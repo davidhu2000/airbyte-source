@@ -110,7 +110,6 @@ func ReadCommand(ch *Helper) *cobra.Command {
 					os.Exit(1)
 				}
 
-				// Emit STARTED trace message
 				ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_STARTED)
 
 				for shardName, shardState := range streamState.Shards {
@@ -138,26 +137,17 @@ func ReadCommand(ch *Helper) *cobra.Command {
 						syncState.Streams[streamStateKey].Shards[shardName] = sc
 					}
 				}
-				
-				// Emit COMPLETE trace message after processing all shards for this stream
+
 				ch.Logger.StreamTrace(table.Stream.Name, keyspaceOrDatabase, internal.STREAM_STATUS_COMPLETE)
-				
-				// Emit state based on configured state type
+
 				stateType := psc.GetStateType()
 				if stateType == internal.STATE_TYPE_STREAM {
-					// Ensure all records are flushed before emitting state
-					ch.Logger.Flush()
-					// Emit per-stream state after processing all shards for this stream
 					ch.Logger.StreamState(table.Stream.Name, keyspaceOrDatabase, syncState.Streams[streamStateKey])
 				}
 			}
-			
-			// For GLOBAL state type, emit a single global state message after processing all streams
+
 			stateType := psc.GetStateType()
 			if stateType == internal.STATE_TYPE_GLOBAL {
-				// Ensure all records are flushed before emitting state
-				ch.Logger.Flush()
-				// Emit global state with all stream states
 				ch.Logger.GlobalState(nil, syncState.Streams) // No shared state for this connector
 			}
 		},
@@ -176,10 +166,10 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	syncState := internal.SyncState{
 		Streams: map[string]internal.ShardStates{},
 	}
-	
+
 	if state != "" {
 		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Parsing state file with length: %d", len(state)))
-		
+
 		// Parse based on state type
 		err := parseStateByType(state, &syncState, logger)
 		if err != nil {
@@ -227,26 +217,26 @@ func parseStateByType(state string, syncState *internal.SyncState, logger intern
 		logger.Log(internal.LOGLEVEL_INFO, "Detected array format, parsing as STREAM type states")
 		return parseStreamTypeStates(state, syncState)
 	}
-	
+
 	// Otherwise, try to parse as a single object and check its type
 	var stateObj map[string]interface{}
 	err := json.Unmarshal([]byte(state), &stateObj)
 	if err != nil {
 		return fmt.Errorf("failed to parse state as JSON object: %v", err)
 	}
-	
+
 	stateType, exists := stateObj["type"]
 	if !exists {
 		// No type field, try legacy format parsing
 		logger.Log(internal.LOGLEVEL_INFO, "No type field found, trying legacy format parsing")
 		return parseLegacyStateFormat(state, syncState)
 	}
-	
+
 	stateTypeStr, ok := stateType.(string)
 	if !ok {
 		return fmt.Errorf("state type is not a string: %v", stateType)
 	}
-	
+
 	switch stateTypeStr {
 	case "GLOBAL":
 		logger.Log(internal.LOGLEVEL_INFO, "Detected GLOBAL state type")
@@ -276,33 +266,33 @@ func parseGlobalTypeState(state string, syncState *internal.SyncState) error {
 			} `json:"streamStates"`
 		} `json:"global"`
 	}
-	
+
 	var globalState GlobalState
 	err := json.Unmarshal([]byte(state), &globalState)
 	if err != nil {
 		return fmt.Errorf("failed to parse GLOBAL state: %v", err)
 	}
-	
+
 	// Convert to our internal format
 	for _, streamState := range globalState.Global.StreamStates {
 		namespace := ""
 		if streamState.StreamDescriptor.Namespace != nil {
 			namespace = *streamState.StreamDescriptor.Namespace
 		}
-		
+
 		stateKey := namespace + ":" + streamState.StreamDescriptor.Name
-		
+
 		// Convert shards to proper format
 		shards := make(map[string]*internal.SerializedCursor)
 		for shardName, cursor := range streamState.StreamState.Shards {
 			shards[shardName] = &cursor
 		}
-		
+
 		syncState.Streams[stateKey] = internal.ShardStates{
 			Shards: shards,
 		}
 	}
-	
+
 	return nil
 }
 
@@ -320,13 +310,13 @@ func parseStreamTypeStates(state string, syncState *internal.SyncState) error {
 			} `json:"stream_state"`
 		} `json:"stream"`
 	}
-	
+
 	var messages []StreamStateMessage
 	err := json.Unmarshal([]byte(state), &messages)
 	if err != nil {
 		return fmt.Errorf("failed to parse STREAM states array: %v", err)
 	}
-	
+
 	// Convert to our internal format
 	for _, message := range messages {
 		if message.Type == "STREAM" {
@@ -334,21 +324,21 @@ func parseStreamTypeStates(state string, syncState *internal.SyncState) error {
 			if message.Stream.StreamDescriptor.Namespace != nil {
 				namespace = *message.Stream.StreamDescriptor.Namespace
 			}
-			
+
 			stateKey := namespace + ":" + message.Stream.StreamDescriptor.Name
-			
+
 			// Convert shards to proper format
 			shards := make(map[string]*internal.SerializedCursor)
 			for shardName, cursor := range message.Stream.StreamState.Shards {
 				shards[shardName] = &cursor
 			}
-			
+
 			syncState.Streams[stateKey] = internal.ShardStates{
 				Shards: shards,
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -366,32 +356,32 @@ func parseSingleStreamTypeState(state string, syncState *internal.SyncState) err
 			} `json:"stream_state"`
 		} `json:"stream"`
 	}
-	
+
 	var streamState SingleStreamState
 	err := json.Unmarshal([]byte(state), &streamState)
 	if err != nil {
 		return fmt.Errorf("failed to parse single STREAM state: %v", err)
 	}
-	
+
 	if streamState.Type == "STREAM" {
 		namespace := ""
 		if streamState.Stream.StreamDescriptor.Namespace != nil {
 			namespace = *streamState.Stream.StreamDescriptor.Namespace
 		}
-		
+
 		stateKey := namespace + ":" + streamState.Stream.StreamDescriptor.Name
-		
+
 		// Convert shards to proper format
 		shards := make(map[string]*internal.SerializedCursor)
 		for shardName, cursor := range streamState.Stream.StreamState.Shards {
 			shards[shardName] = &cursor
 		}
-		
+
 		syncState.Streams[stateKey] = internal.ShardStates{
 			Shards: shards,
 		}
 	}
-	
+
 	return nil
 }
 
@@ -402,21 +392,21 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 	if err == nil {
 		return nil
 	}
-	
+
 	// Fall back to the old parseStreamStateMessages logic for line-based messages
 	lines := strings.Split(strings.TrimSpace(state), "\n")
-	
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		
+
 		var message internal.AirbyteMessage
 		err := json.Unmarshal([]byte(line), &message)
 		if err != nil {
 			continue // Skip invalid JSON lines
 		}
-		
+
 		if message.Type == internal.STATE && message.State != nil {
 			switch message.State.Type {
 			case internal.STATE_TYPE_STREAM:
@@ -427,7 +417,7 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 					if streamDesc.Namespace != nil {
 						namespace = *streamDesc.Namespace
 					}
-					
+
 					stateKey := namespace + ":" + streamDesc.Name
 					if message.State.Stream.StreamState != nil {
 						syncState.Streams[stateKey] = *message.State.Stream.StreamState
@@ -443,7 +433,7 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 						if streamDesc.Namespace != nil {
 							namespace = *streamDesc.Namespace
 						}
-						
+
 						stateKey := namespace + ":" + streamDesc.Name
 						if streamState.StreamState != nil {
 							syncState.Streams[stateKey] = *streamState.StreamState
@@ -460,7 +450,7 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 					if streamDesc.Namespace != nil {
 						namespace = *streamDesc.Namespace
 					}
-					
+
 					stateKey := namespace + ":" + streamDesc.Name
 					if message.State.Stream.StreamState != nil {
 						syncState.Streams[stateKey] = *message.State.Stream.StreamState
@@ -469,7 +459,7 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
