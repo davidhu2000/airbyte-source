@@ -125,13 +125,13 @@ $(PSDBCONNECT_PROTO_OUT)/v1alpha1/psdbconnect.v1alpha1.pb.go: $(PROTO_TOOLS) pro
 
 
 check:
-	docker run --rm -v .:/airbyte  -i airbyte-source-app check --config /airbyte/source.json
+	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest check --config /airbyte/source.json
 
 discover:
-	docker run --rm -v .:/airbyte  -i airbyte-source-app discover --config /airbyte/source.json > catalog-raw.json
+	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest discover --config /airbyte/source.json > catalog-raw.json
 
 read:
-	docker run --rm -v .:/airbyte  -i airbyte-source-app read --config /airbyte/source.json --catalog /airbyte/catalog.json
+	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json
 read_with_state:
 	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json --state /airbyte/state_new_format.json
 
