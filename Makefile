@@ -1,5 +1,5 @@
 COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null)
-VERSION := "0.1.8"
+VERSION := "0.1.9"
 DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 NAME := "airbyte-source"
 DOCKER_BUILD_PLATFORM := "linux/amd64"
@@ -132,6 +132,8 @@ discover:
 
 read:
 	docker run --rm -v .:/airbyte  -i airbyte-source-app read --config /airbyte/source.json --catalog /airbyte/catalog.json
+read_with_state:
+	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json --state /airbyte/state_new_format.json
 
 # DockerHub build and push targets
 DOCKERHUB_REPO := davidhu314

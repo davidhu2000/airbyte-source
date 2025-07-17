@@ -84,6 +84,7 @@ func ReadCommand(ch *Helper) *cobra.Command {
 					os.Exit(1)
 				}
 				state = string(b)
+				ch.Logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("State value: %s", state))
 			}
 			shards, err := ch.Database.ListShards(context.Background(), psc)
 			if err != nil {
@@ -171,6 +172,8 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 	syncState := internal.SyncState{
 		Streams: map[string]internal.ShardStates{},
 	}
+
+	logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("state value: %s", state))
 	
 	if state != "" {
 		logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("Parsing state file with length: %d", len(state)))
