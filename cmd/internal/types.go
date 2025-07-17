@@ -390,9 +390,9 @@ func mapEnumValue(value sqltypes.Value, values []string) sqltypes.Value {
 }
 
 type AirbyteState struct {
-	Type 	string                   `json:"type"`        // "STREAM" or "GLOBAL"
-	Stream    *AirbyteStreamState `json:"stream,omitempty"`  // Stream state for STREAM type
-	Global    *AirbyteGlobalState `json:"global,omitempty"`  // Global state for GLOBAL type
+	Type   string              `json:"type"`             // "STREAM" or "GLOBAL"
+	Stream *AirbyteStreamState `json:"stream,omitempty"` // Stream state for STREAM type
+	Global *AirbyteGlobalState `json:"global,omitempty"` // Global state for GLOBAL type
 }
 
 // StreamDescriptor identifies a stream by name and optional namespace
@@ -409,25 +409,25 @@ type AirbyteStreamState struct {
 
 // AirbyteGlobalState contains global state shared across streams
 type AirbyteGlobalState struct {
-	SharedState  map[string]interface{} `json:"shared_state,omitempty"`   // Shared state across all streams
-	StreamStates []AirbyteStreamState   `json:"stream_states"`            // Individual stream states
+	SharedState  map[string]interface{} `json:"shared_state,omitempty"` // Shared state across all streams
+	StreamStates []AirbyteStreamState   `json:"stream_states"`          // Individual stream states
 }
 
 type AirbyteMessage struct {
-	Type             string             `json:"type"`
-	Log              *AirbyteLogMessage `json:"log,omitempty"`
-	ConnectionStatus *ConnectionStatus  `json:"connectionStatus,omitempty"`
-	Catalog          *Catalog           `json:"catalog,omitempty"`
-	Record           *AirbyteRecord     `json:"record,omitempty"`
-	State            *AirbyteState      `json:"state,omitempty"`
+	Type             string               `json:"type"`
+	Log              *AirbyteLogMessage   `json:"log,omitempty"`
+	ConnectionStatus *ConnectionStatus    `json:"connectionStatus,omitempty"`
+	Catalog          *Catalog             `json:"catalog,omitempty"`
+	Record           *AirbyteRecord       `json:"record,omitempty"`
+	State            *AirbyteState        `json:"state,omitempty"`
 	Trace            *AirbyteTraceMessage `json:"trace,omitempty"`
 }
 
 // AirbyteTraceMessage for stream status tracking
 type AirbyteTraceMessage struct {
-	Type         string             `json:"type"`
-	EmittedAt    int64              `json:"emitted_at"`
-	Stream       *AirbyteStreamStatus `json:"stream,omitempty"`
+	Type         string               `json:"type"`
+	EmittedAt    int64                `json:"emitted_at"`
+	StreamStatus *AirbyteStreamStatus `json:"stream_status,omitempty"`
 }
 
 // AirbyteStreamStatus for tracking stream processing status

@@ -172,7 +172,7 @@ func (a *airbyteLogger) StreamTrace(streamName, namespace, status string) {
 		Trace: &AirbyteTraceMessage{
 			Type:      TRACE_TYPE_STREAM,
 			EmittedAt: time.Now().UnixMilli(),
-			Stream:    streamStatus,
+			StreamStatus:    streamStatus,
 		},
 	}); err != nil {
 		a.Error(fmt.Sprintf("stream trace encoding error: %v", err))
