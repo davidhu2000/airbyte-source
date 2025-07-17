@@ -21,7 +21,7 @@ type AirbyteLogger interface {
 	Error(error string)
 }
 
-const MaxBatchSize = 10000
+const MaxBatchSize = 1
 
 func NewLogger(w io.Writer) AirbyteLogger {
 	al := airbyteLogger{}
