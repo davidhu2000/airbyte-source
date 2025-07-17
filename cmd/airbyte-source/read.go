@@ -418,7 +418,7 @@ func parseLegacyStateFormat(state string, syncState *internal.SyncState) error {
 		}
 		
 		if message.Type == internal.STATE && message.State != nil {
-			switch message.State.StateType {
+			switch message.State.Type {
 			case internal.STATE_TYPE_STREAM:
 				// Handle STREAM state message
 				if message.State.Stream != nil {

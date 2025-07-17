@@ -102,7 +102,7 @@ func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates Sh
 	
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
-		State: &AirbyteState{StateType: STATE_TYPE_STREAM, Stream: streamState},
+		State: &AirbyteState{Type: STATE_TYPE_STREAM, Stream: streamState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("stream state encoding error: %v", err))
 	}
@@ -146,7 +146,7 @@ func (a *airbyteLogger) GlobalState(sharedState map[string]interface{}, streamSt
 	
 	if err := a.recordEncoder.Encode(AirbyteMessage{
 		Type:  STATE,
-		State: &AirbyteState{StateType: STATE_TYPE_GLOBAL, Global: globalState},
+		State: &AirbyteState{Type: STATE_TYPE_GLOBAL, Global: globalState},
 	}); err != nil {
 		a.Error(fmt.Sprintf("global state encoding error: %v", err))
 	}
