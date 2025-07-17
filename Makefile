@@ -123,18 +123,6 @@ $(PSDBCONNECT_PROTO_OUT)/v1alpha1/psdbconnect.v1alpha1.pb.go: $(PROTO_TOOLS) pro
 	  -I proto \
 	  proto/psdbconnect.v1alpha1.proto
 
-
-check:
-	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest check --config /airbyte/source.json
-
-discover:
-	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest discover --config /airbyte/source.json > catalog-raw.json
-
-read:
-	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json
-read_with_state:
-	docker run --rm -v .:/airbyte  -i davidhu314/airbyte-source:latest read --config /airbyte/source.json --catalog /airbyte/catalog.json --state /airbyte/state_global.json
-
 # DockerHub build and push targets
 DOCKERHUB_REPO := davidhu314
 DOCKERHUB_IMAGE := $(DOCKERHUB_REPO)/$(NAME)
