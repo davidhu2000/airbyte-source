@@ -1,5 +1,5 @@
 COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null)
-VERSION := "0.2.2-dev"
+VERSION := "0.2.2-dev.1"
 DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 NAME := "airbyte-source"
 DOCKER_BUILD_PLATFORM := "linux/amd64"
