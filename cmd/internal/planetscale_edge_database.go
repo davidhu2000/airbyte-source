@@ -542,7 +542,8 @@ func (p PlanetScaleEdgeDatabase) printQueryResult(qr *sqltypes.Result, tableName
 	}
 }
 
-// CDCCursorField orders versions of the same row for destination dedup.
+// CDCCursorField orders versions of the same row for destination dedup, like Airbyte's own CDC sources:
+// https://docs.airbyte.com/platform/understanding-airbyte/cdc
 const CDCCursorField = "_ab_cdc_cursor"
 
 var lastCDCCursor int64
