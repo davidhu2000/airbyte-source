@@ -47,7 +47,8 @@ func (tal *testAirbyteLogger) Record(tableNamespace, tableName string, data map[
 	tal.records[key] = append(tal.records[key], data)
 }
 
-func (testAirbyteLogger) Flush() {
+func (testAirbyteLogger) Flush() error {
+	return nil
 }
 
 func (testAirbyteLogger) StreamState(streamName, namespace string, shardStates ShardStates) {

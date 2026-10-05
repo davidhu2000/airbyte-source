@@ -108,11 +108,11 @@ func (p PlanetScaleEdgeDatabase) getStreamForTable(ctx context.Context, psc Plan
 	if err != nil {
 		return stream, errors.Wrapf(err, "Unable to get column names & types for table %v", tableName)
 	}
+	stream.Schema.Properties[CDCCursorField] = PropertyType{Type: []string{"number"}, AirbyteType: "integer"}
 
 	// need this otherwise Airbyte will fail schema discovery for views
 	// without primary keys.
 	stream.PrimaryKeys = [][]string{}
-	stream.DefaultCursorFields = []string{}
 
 	primaryKeys, err := p.Mysql.GetTablePrimaryKeys(ctx, psc, tableName)
 	if err != nil {
@@ -122,11 +122,9 @@ func (p PlanetScaleEdgeDatabase) getStreamForTable(ctx context.Context, psc Plan
 		stream.PrimaryKeys = append(stream.PrimaryKeys, []string{key})
 	}
 
-	// pick the last key field as the default cursor field.
-	if len(primaryKeys) > 0 {
-		stream.DefaultCursorFields = append(stream.DefaultCursorFields, primaryKeys[len(primaryKeys)-1])
-	}
-
+	// Dedup orders versions of a row by the cursor. A primary key is identical across versions,
+	// so use the emission-ordered CDC cursor instead.
+	stream.DefaultCursorFields = []string{CDCCursorField}
 	stream.SourceDefinedCursor = true
 	return stream, nil
 }
@@ -203,7 +201,6 @@ func (p PlanetScaleEdgeDatabase) ListShards(ctx context.Context, psc PlanetScale
 // 5. End the stream when (a) a vgtid newer than latest vgtid is encountered or (b) the timeout kicks in.
 func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps PlanetScaleSource, s ConfiguredStream, lastKnownPosition *psdbconnect.TableCursor) (*SerializedCursor, error) {
 	var (
-		err                     error
 		sErr                    error
 		currentSerializedCursor *SerializedCursor
 		syncMode                string
@@ -236,15 +233,16 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 	stopPosition, lcErr := p.getStopCursorPosition(ctx, currentPosition.Shard, currentPosition.Keyspace, table, ps, tabletType)
 	if lcErr != nil {
 		p.Logger.Log(LOGLEVEL_ERROR, preamble+fmt.Sprintf("Error fetching latest cursor position: %+v", lcErr))
-		return currentSerializedCursor, errors.Wrap(err, "Unable to get latest cursor position")
+		return currentSerializedCursor, errors.Wrap(lcErr, "Unable to get latest cursor position")
 	}
 	if stopPosition == "" {
-		p.Logger.Log(LOGLEVEL_ERROR, preamble+fmt.Sprintf("Error fetching latest cursor position, was empty string: %+v", stopPosition))
-		return currentSerializedCursor, errors.Wrap(err, "Unable to get latest cursor position")
+		p.Logger.Log(LOGLEVEL_ERROR, preamble+"Error fetching latest cursor position, was empty string")
+		return currentSerializedCursor, errors.New("Unable to get latest cursor position: empty position")
 	}
 
-	// the last synced VGTID is not after the current VGTID
-	if currentPosition.Position != "" && !positionAfter(stopPosition, currentPosition.Position) {
+	// the last synced VGTID is not after the current VGTID.
+	// Only skip in incremental mode: an unfinished COPY still has rows to read at the same GTID.
+	if syncMode == "incremental" && !positionAfter(stopPosition, currentPosition.Position) {
 		p.Logger.Log(LOGLEVEL_INFO, preamble+"No new GTIDs found, exiting")
 		return TableCursorToSerializedCursor(currentPosition)
 	}
@@ -258,6 +256,8 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 		p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sStarting sync #%v", preamble, syncCount))
 		newPosition, recordCount, err := p.sync(ctx, syncMode, currentPosition, stopPosition, table, ps, tabletType, timeout)
 		totalRecordCount += recordCount
+		// sync may return a new cursor (e.g. after a LASTPK event), so checkpoint what it returned
+		currentPosition = newPosition
 		currentSerializedCursor, sErr = TableCursorToSerializedCursor(currentPosition)
 		if sErr != nil {
 			// if we failed to serialize here, we should bail.
@@ -267,7 +267,12 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 			if s, ok := status.FromError(err); ok {
 				p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%v%v records synced after %v syncs. Got error [%v], returning with cursor [%v] after gRPC error", preamble, totalRecordCount, syncCount, s.Code(), currentPosition))
 				if syncCount >= maxRetries {
-					return currentSerializedCursor, nil
+					// A deadline ends a bounded read; anything else means we could not read, e.g. the
+					// cursor is older than binlog retention. Fail instead of reporting a successful sync.
+					if s.Code() == codes.DeadlineExceeded {
+						return currentSerializedCursor, nil
+					}
+					return currentSerializedCursor, errors.Wrapf(err, "giving up after %v syncs", syncCount)
 				}
 			} else if errors.Is(err, io.EOF) {
 				p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%vFinished reading %v records after %v syncs for table [%v]", preamble, totalRecordCount, syncCount, table.Name))
@@ -277,20 +282,23 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 				return currentSerializedCursor, err
 			}
 		}
-		currentPosition = newPosition
 		p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%vContinuing to next sync #%v. Set next sync start position to [%+v].", preamble, syncCount+1, currentPosition))
 	}
 }
 
-func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *psdbconnect.TableCursor, stopPosition string, s Stream, ps PlanetScaleSource, tabletType psdbconnect.TabletType, timeout time.Duration) (*psdbconnect.TableCursor, int, error) {
+func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *psdbconnect.TableCursor, stopPosition string, s Stream, ps PlanetScaleSource, tabletType psdbconnect.TabletType, timeout time.Duration) (_ *psdbconnect.TableCursor, _ int, err error) {
 	preamble := fmt.Sprintf("[%v:%v:%v shard : %v] ", s.Namespace, TabletTypeToString(tabletType), s.Name, tc.Shard)
 
-	defer p.Logger.Flush()
+	// records that failed to write must not be checkpointed past
+	defer func() {
+		if flushErr := p.Logger.Flush(); flushErr != nil {
+			err = errors.Wrap(flushErr, "unable to write records")
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var (
-		err          error
 		vtgateClient vtgateservice.VitessClient
 		fields       []*query.Field
 	)
@@ -416,7 +424,7 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 			p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sReady to finish sync and flush since copy phase completed or stop VGTID passed", preamble))
 			canFinishSync = true
 		}
-		if !isFullSync && positionEqual(tc.Position, stopPosition) {
+		if !isFullSync && positionAtLeast(tc.Position, stopPosition) {
 			p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sReady to finish sync and flush since stop position [%+v] found", preamble, stopPosition))
 			canFinishSync = true
 		}
@@ -449,7 +457,6 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 }
 
 func (p PlanetScaleEdgeDatabase) getStopCursorPosition(ctx context.Context, shard, keyspace string, s Stream, ps PlanetScaleSource, tabletType psdbconnect.TabletType) (string, error) {
-	defer p.Logger.Flush()
 	timeout := 45 * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -470,23 +477,20 @@ func (p PlanetScaleEdgeDatabase) getStopCursorPosition(ctx context.Context, shar
 	vtgateCursor, vtgateErr := vtgateClient.VStream(ctx, vtgateReq)
 
 	if vtgateErr != nil {
-		return "", nil
+		return "", vtgateErr
 	}
 
+	// keep reading until a VGTID arrives; the timeout above bounds the wait
 	for {
 		res, err := vtgateCursor.Recv()
 		if err != nil {
-			return "", err
+			return "", errors.Wrap(err, "unable to find VEvent of VGTID type to use as stop cursor")
 		}
 
-		if res.Events != nil {
-			for _, event := range res.Events {
-				if event.Type == binlogdata.VEventType_VGTID {
-					gtid := event.Vgtid.ShardGtids[0].Gtid
-					return gtid, nil
-				}
+		for _, event := range res.Events {
+			if event.Type == binlogdata.VEventType_VGTID {
+				return event.Vgtid.ShardGtids[0].Gtid, nil
 			}
-			return "", errors.New("unable to find VEvent of VGTID type to use as stop cursor")
 		}
 	}
 }
@@ -533,8 +537,24 @@ func (p PlanetScaleEdgeDatabase) printQueryResult(qr *sqltypes.Result, tableName
 	data := QueryResultToRecords(qr, ps)
 
 	for _, record := range data {
+		record[CDCCursorField] = nextCDCCursor()
 		p.Logger.Record(tableNamespace, tableName, record)
 	}
+}
+
+// CDCCursorField orders versions of the same row for destination dedup, like Airbyte's own CDC sources:
+// https://docs.airbyte.com/platform/understanding-airbyte/cdc
+const CDCCursorField = "_ab_cdc_cursor"
+
+var lastCDCCursor int64
+
+// nextCDCCursor returns a value strictly greater than any previous one in this process.
+// Rows are emitted in binlog order, so a later version of a row always gets a larger cursor,
+// even when both share the same millisecond emitted_at. Values track wall-clock nanoseconds
+// so later syncs sort after earlier ones.
+func nextCDCCursor() int64 {
+	lastCDCCursor = max(lastCDCCursor+1, time.Now().UnixNano())
+	return lastCDCCursor
 }
 
 func buildVStreamRequest(tabletType psdbconnect.TabletType, table string, shard string, keyspace string, gtid string, lastKnownPk *query.QueryResult) *vtgate.VStreamRequest {
@@ -573,8 +593,8 @@ func buildVStreamRequest(tabletType psdbconnect.TabletType, table string, shard 
 	return req
 }
 
-// positionEqual returns true if position `a` is equal to or after position `b`
-func positionEqual(a string, b string) bool {
+// positionAtLeast returns true if position `a` is equal to or after position `b`
+func positionAtLeast(a string, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
@@ -589,7 +609,7 @@ func positionEqual(a string, b string) bool {
 		return false
 	}
 
-	return parsedA.Equal(parsedB)
+	return parsedA.AtLeast(parsedB)
 }
 
 // positionAfter returns true if position `a` is after position `b`

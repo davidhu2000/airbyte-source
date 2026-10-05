@@ -14,7 +14,7 @@ type AirbyteLogger interface {
 	Catalog(catalog Catalog)
 	ConnectionStatus(status ConnectionStatus)
 	Record(tableNamespace, tableName string, data map[string]interface{})
-	Flush()
+	Flush() error
 	StreamState(streamName, namespace string, shardStates ShardStates)                   // Stream state method
 	GlobalState(sharedState map[string]interface{}, streamStates map[string]ShardStates) // Global state method
 	StreamTrace(streamName, namespace, status string)                                    // Stream status trace method
@@ -35,6 +35,8 @@ type airbyteLogger struct {
 	recordEncoder *json.Encoder
 	writer        io.Writer
 	records       []AirbyteMessage
+	// first record write error since the last Flush, so automatic flushes in Record are not lost
+	flushErr error
 }
 
 func (a *airbyteLogger) Log(level, message string) {
@@ -72,17 +74,25 @@ func (a *airbyteLogger) Record(tableNamespace, tableName string, data map[string
 
 	a.records = append(a.records, amsg)
 	if len(a.records) == MaxBatchSize {
-		a.Flush()
+		a.flushErr = a.Flush()
 	}
 }
 
-func (a *airbyteLogger) Flush() {
+// Flush writes buffered records and returns the first write error, so callers do not
+// checkpoint past records that never reached Airbyte.
+func (a *airbyteLogger) Flush() error {
+	err := a.flushErr
+	a.flushErr = nil
 	for _, record := range a.records {
-		if err := a.recordEncoder.Encode(record); err != nil {
-			a.Error(fmt.Sprintf("flush encoding error: %v", err))
+		if encodeErr := a.recordEncoder.Encode(record); encodeErr != nil {
+			a.Error(fmt.Sprintf("flush encoding error: %v", encodeErr))
+			if err == nil {
+				err = encodeErr
+			}
 		}
 	}
 	a.records = a.records[:0]
+	return err
 }
 
 func (a *airbyteLogger) StreamState(streamName, namespace string, shardStates ShardStates) {
