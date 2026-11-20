@@ -189,8 +189,11 @@ func readState(state string, psc internal.PlanetScaleSource, streams []internal.
 
 		// if no table cursor was found in the state, or we want to ignore the current cursor,
 		// Send along an empty cursor for each shard.
-		if _, ok := syncState.Streams[stateKey]; !ok || ignoreCurrentCursor {
-			if !ok {
+		// Airbyte clears a stream to a null stream_state (e.g. backfilling new columns), which
+		// parses as zero shards. Treat that as missing, otherwise the stream never reads again.
+		existing, ok := syncState.Streams[stateKey]
+		if !ok || len(existing.Shards) == 0 || ignoreCurrentCursor {
+			if !ok || len(existing.Shards) == 0 {
 				logger.Log(internal.LOGLEVEL_INFO, fmt.Sprintf("No cursor found for key %s (state exists: %t)", stateKey, ok))
 			}
 			if ignoreCurrentCursor {
