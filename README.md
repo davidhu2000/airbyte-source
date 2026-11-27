@@ -44,6 +44,8 @@ read(Config, ConfiguredAirbyteCatalog, State) -> Stream<AirbyteMessage>
 5. Support for sharded databases.
 6. Peek before Sync.
 
+For single-shard tables in Incremental Append + Deduped mode, the connector emits `_ab_cdc_deleted_at` on deletes and on old keys when a row's dedup key changes. The stream needs a configured primary key and `_ab_cdc_deleted_at` selected in its schema. Refresh the Airbyte source schema to pick up the field on existing connections. Destinations that support CDC hard deletes remove the matching row. Multi-shard tables and Append mode skip delete events.
+
 ## Running the application locally.
 
 ### 1. Check command:

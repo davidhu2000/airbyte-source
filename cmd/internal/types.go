@@ -93,8 +93,10 @@ type Catalog struct {
 }
 
 type ConfiguredStream struct {
-	Stream   Stream `json:"stream"`
-	SyncMode string `json:"sync_mode"`
+	Stream              Stream     `json:"stream"`
+	SyncMode            string     `json:"sync_mode"`
+	DestinationSyncMode string     `json:"destination_sync_mode"`
+	PrimaryKey          [][]string `json:"primary_key"`
 }
 
 func (cs ConfiguredStream) IncrementalSyncRequested() bool {
