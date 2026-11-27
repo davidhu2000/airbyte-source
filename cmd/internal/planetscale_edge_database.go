@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -342,6 +343,21 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 	// Can finish sync once we've synced to the stop position, or finished the VStream COPY phase
 	canFinishSync := false
 	resultCount := 0
+	_, hasDeleteField := table.Schema.Properties[CDCDeletedAtField]
+	// Shard reads are ordered independently. A delete from one shard must not
+	// overwrite a live record with the same Airbyte key from another shard.
+	replicateDeletes := (tc.Shard == "-" || tc.Shard == "0") && stream.IncrementalSyncRequested() && stream.DestinationSyncMode == "append_dedup" && hasDeleteField
+	var keyColumns []int
+	emitRow := func(result *sqltypes.Result, deletedAt any) {
+		for _, record := range QueryResultToRecords(result, &ps) {
+			record[CDCCursorField] = nextCDCCursor()
+			if hasDeleteField {
+				record[CDCDeletedAtField] = deletedAt
+			}
+			p.Logger.Record(keyspaceOrDatabase, table.Name, record)
+			resultCount++
+		}
+	}
 
 	for {
 		res, err := c.Recv()
@@ -393,29 +409,25 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 			case binlogdata.VEventType_FIELD:
 				// Save fields for processing
 				fields = event.FieldEvent.Fields
+				if replicateDeletes {
+					keyColumns = primaryKeyColumnIndexes(fields, stream.PrimaryKey)
+				}
 				p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sFIELD event found, setting fields to %+v", preamble, fields))
 			case binlogdata.VEventType_ROW:
 				for _, change := range event.RowEvent.RowChanges {
-					row := change.GetAfter()
-					var deletedAt any
-					if row == nil {
-						// A delete only has a before image, which carries the primary key.
-						row = change.GetBefore()
-						if row == nil || !stream.IncrementalSyncRequested() {
-							continue
+					after := decodeRow(fields, change.GetAfter())
+					if len(keyColumns) > 0 && change.GetBefore() != nil && (event.RowEvent.Shard == "" || event.RowEvent.Shard == tc.Shard) {
+						before := decodeRow(fields, change.GetBefore())
+						if shouldDeleteOldKey(before, after, keyColumns) {
+							timestamp := event.Timestamp
+							if timestamp == 0 {
+								timestamp = time.Now().Unix()
+							}
+							emitRow(before, time.Unix(timestamp, 0).UTC().Format(time.RFC3339))
 						}
-						timestamp := event.Timestamp
-						if timestamp == 0 {
-							timestamp = time.Now().Unix()
-						}
-						deletedAt = time.Unix(timestamp, 0).UTC().Format(time.RFC3339)
 					}
-					result := sqltypes.Proto3ToResult(&query.QueryResult{Fields: fields, Rows: []*query.Row{row}})
-					for _, record := range QueryResultToRecords(result, &ps) {
-						record[CDCCursorField] = nextCDCCursor()
-						record[CDCDeletedAtField] = deletedAt
-						p.Logger.Record(keyspaceOrDatabase, table.Name, record)
-						resultCount++
+					if after != nil {
+						emitRow(after, nil)
 					}
 				}
 			case binlogdata.VEventType_COPY_COMPLETED:
@@ -454,6 +466,46 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 			return tc, resultCount, io.EOF
 		}
 	}
+}
+
+func decodeRow(fields []*query.Field, row *query.Row) *sqltypes.Result {
+	if row == nil {
+		return nil
+	}
+	return sqltypes.Proto3ToResult(&query.QueryResult{Fields: fields, Rows: []*query.Row{row}})
+}
+
+func primaryKeyColumnIndexes(fields []*query.Field, primaryKey [][]string) []int {
+	indexes := make([]int, 0, len(primaryKey))
+	for _, path := range primaryKey {
+		if len(path) != 1 {
+			return nil
+		}
+		index := slices.IndexFunc(fields, func(field *query.Field) bool { return field.Name == path[0] })
+		if index < 0 {
+			return nil
+		}
+		indexes = append(indexes, index)
+	}
+	return indexes
+}
+
+func shouldDeleteOldKey(before, after *sqltypes.Result, keyColumns []int) bool {
+	oldRow := before.Rows[0]
+	changed := after == nil
+	for _, index := range keyColumns {
+		if index >= len(oldRow) || oldRow[index].IsNull() {
+			return false
+		}
+		if after != nil {
+			newRow := after.Rows[0]
+			if index >= len(newRow) || newRow[index].IsNull() {
+				return false
+			}
+			changed = changed || oldRow[index].RawStr() != newRow[index].RawStr()
+		}
+	}
+	return changed
 }
 
 func (p PlanetScaleEdgeDatabase) getStopCursorPosition(ctx context.Context, shard, keyspace string, s Stream, ps PlanetScaleSource, tabletType psdbconnect.TabletType) (string, error) {
