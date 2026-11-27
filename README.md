@@ -44,6 +44,8 @@ read(Config, ConfiguredAirbyteCatalog, State) -> Stream<AirbyteMessage>
 5. Support for sharded databases.
 6. Peek before Sync.
 
+Incremental sync emits MySQL `DELETE` events with the row's primary key and `_ab_cdc_deleted_at`. With Incremental Append + Deduped, destinations that support CDC hard deletes remove the matching row. Append mode keeps the delete record. For existing connections, refresh the Airbyte source schema to pick up `_ab_cdc_deleted_at`.
+
 ## Running the application locally.
 
 ### 1. Check command:

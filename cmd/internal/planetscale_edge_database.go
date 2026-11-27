@@ -109,6 +109,7 @@ func (p PlanetScaleEdgeDatabase) getStreamForTable(ctx context.Context, psc Plan
 		return stream, errors.Wrapf(err, "Unable to get column names & types for table %v", tableName)
 	}
 	stream.Schema.Properties[CDCCursorField] = PropertyType{Type: []string{"number"}, AirbyteType: "integer"}
+	stream.Schema.Properties[CDCDeletedAtField] = getJsonSchemaType("timestamp", false, "yes")
 
 	// need this otherwise Airbyte will fail schema discovery for views
 	// without primary keys.
@@ -254,7 +255,7 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 	for {
 		syncCount += 1
 		p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sStarting sync #%v", preamble, syncCount))
-		newPosition, recordCount, err := p.sync(ctx, syncMode, currentPosition, stopPosition, table, ps, tabletType, timeout)
+		newPosition, recordCount, err := p.sync(ctx, syncMode, currentPosition, stopPosition, s, ps, tabletType, timeout)
 		totalRecordCount += recordCount
 		// sync may return a new cursor (e.g. after a LASTPK event), so checkpoint what it returned
 		currentPosition = newPosition
@@ -286,8 +287,9 @@ func (p PlanetScaleEdgeDatabase) Read(ctx context.Context, w io.Writer, ps Plane
 	}
 }
 
-func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *psdbconnect.TableCursor, stopPosition string, s Stream, ps PlanetScaleSource, tabletType psdbconnect.TabletType, timeout time.Duration) (_ *psdbconnect.TableCursor, _ int, err error) {
-	preamble := fmt.Sprintf("[%v:%v:%v shard : %v] ", s.Namespace, TabletTypeToString(tabletType), s.Name, tc.Shard)
+func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *psdbconnect.TableCursor, stopPosition string, stream ConfiguredStream, ps PlanetScaleSource, tabletType psdbconnect.TabletType, timeout time.Duration) (_ *psdbconnect.TableCursor, _ int, err error) {
+	table := stream.Stream
+	preamble := fmt.Sprintf("[%v:%v:%v shard : %v] ", table.Namespace, TabletTypeToString(tabletType), table.Name, tc.Shard)
 
 	// records that failed to write must not be checkpointed past
 	defer func() {
@@ -316,7 +318,7 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 	}
 
 	isFullSync := syncMode == "full"
-	vtgateReq := buildVStreamRequest(tabletType, s.Name, tc.Shard, tc.Keyspace, tc.Position, tc.LastKnownPk)
+	vtgateReq := buildVStreamRequest(tabletType, table.Name, tc.Shard, tc.Keyspace, tc.Position, tc.LastKnownPk)
 	p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sRequesting VStream with %+v", preamble, vtgateReq))
 
 	if isFullSync {
@@ -331,7 +333,7 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 		return tc, 0, err
 	}
 
-	keyspaceOrDatabase := s.Namespace
+	keyspaceOrDatabase := table.Namespace
 	if keyspaceOrDatabase == "" {
 		keyspaceOrDatabase = ps.Database
 	}
@@ -358,7 +360,6 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 			}
 		}
 
-		var rows []*query.QueryResult
 		for _, event := range res.Events {
 			switch event.Type {
 			case binlogdata.VEventType_VGTID:
@@ -394,13 +395,27 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 				fields = event.FieldEvent.Fields
 				p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sFIELD event found, setting fields to %+v", preamble, fields))
 			case binlogdata.VEventType_ROW:
-				// Collect rows for processing
 				for _, change := range event.RowEvent.RowChanges {
-					if change.After != nil {
-						rows = append(rows, &query.QueryResult{
-							Fields: fields,
-							Rows:   []*query.Row{change.After},
-						})
+					row := change.GetAfter()
+					var deletedAt any
+					if row == nil {
+						// A delete only has a before image, which carries the primary key.
+						row = change.GetBefore()
+						if row == nil || !stream.IncrementalSyncRequested() {
+							continue
+						}
+						timestamp := event.Timestamp
+						if timestamp == 0 {
+							timestamp = time.Now().Unix()
+						}
+						deletedAt = time.Unix(timestamp, 0).UTC().Format(time.RFC3339)
+					}
+					result := sqltypes.Proto3ToResult(&query.QueryResult{Fields: fields, Rows: []*query.Row{row}})
+					for _, record := range QueryResultToRecords(result, &ps) {
+						record[CDCCursorField] = nextCDCCursor()
+						record[CDCDeletedAtField] = deletedAt
+						p.Logger.Record(keyspaceOrDatabase, table.Name, record)
+						resultCount++
 					}
 				}
 			case binlogdata.VEventType_COPY_COMPLETED:
@@ -427,21 +442,6 @@ func (p PlanetScaleEdgeDatabase) sync(ctx context.Context, syncMode string, tc *
 		if !isFullSync && positionAtLeast(tc.Position, stopPosition) {
 			p.Logger.Log(LOGLEVEL_INFO, fmt.Sprintf("%sReady to finish sync and flush since stop position [%+v] found", preamble, stopPosition))
 			canFinishSync = true
-		}
-
-		if len(rows) > 0 {
-			for _, result := range rows {
-				qr := sqltypes.Proto3ToResult(result)
-				for _, row := range qr.Rows {
-					resultCount += 1
-					sqlResult := &sqltypes.Result{
-						Fields: fields,
-					}
-					sqlResult.Rows = append(sqlResult.Rows, row)
-					// Results queued to Airbyte here, and flushed at the end of sync()
-					p.printQueryResult(sqlResult, keyspaceOrDatabase, s.Name, &ps)
-				}
-			}
 		}
 
 		// Exit sync and flush records once the VGTID position is at or past the desired stop position, and we're no longer waiting for COPY phase to complete
@@ -531,20 +531,10 @@ func (p PlanetScaleEdgeDatabase) initializeVTGateClient(ctx context.Context, ps 
 	}
 }
 
-// printQueryResult will pretty-print an AirbyteRecordMessage to the logger.
-// Copied from vtctl/query.go
-func (p PlanetScaleEdgeDatabase) printQueryResult(qr *sqltypes.Result, tableNamespace, tableName string, ps *PlanetScaleSource) {
-	data := QueryResultToRecords(qr, ps)
-
-	for _, record := range data {
-		record[CDCCursorField] = nextCDCCursor()
-		p.Logger.Record(tableNamespace, tableName, record)
-	}
-}
-
-// CDCCursorField orders versions of the same row for destination dedup, like Airbyte's own CDC sources:
-// https://docs.airbyte.com/platform/understanding-airbyte/cdc
-const CDCCursorField = "_ab_cdc_cursor"
+const (
+	CDCCursorField    = "_ab_cdc_cursor"     // Orders versions of the same row for destination dedup.
+	CDCDeletedAtField = "_ab_cdc_deleted_at" // Marks a row deletion for Airbyte destinations.
+)
 
 var lastCDCCursor int64
 
